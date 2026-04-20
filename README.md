@@ -4,6 +4,8 @@
 
 Built with **Tauri**, **Svelte**, and **Rust**, Warbler is designed to be fast, secure, and highly extensible.
 
+![Warbler UI](./src/assets/Screenshot.png)
+
 ## ✨ Key Features
 
 -   **🔌 Universal Model Connectivity**: Connect to **Ollama** (default) or any **OpenAI-compatible** backend (like `llama.cpp`).
