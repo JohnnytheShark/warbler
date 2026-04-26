@@ -15,6 +15,7 @@ pub struct OllamaMessage {
     pub content: String,
     pub images: Option<Vec<String>>,
     pub thinking: Option<String>,
+    pub tool_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -166,6 +167,7 @@ async fn get_ollama_models(pool: tauri::State<'_, SqlitePool>) -> Result<String,
 
 #[command]
 async fn chat_with_model(
+    app_handle: tauri::AppHandle,
     pool: tauri::State<'_, SqlitePool>,
     messages: Vec<serde_json::Value>,
     model: String,
@@ -204,7 +206,7 @@ async fn chat_with_model(
     // ── Pre-process Hashtags ──
     if let Some(last_msg) = current_messages.iter_mut().rev().find(|m| m["role"] == "user") {
         if let Some(content) = last_msg["content"].as_str() {
-             if let Ok(processed) = preprocess_hashtags_internal(pool.clone(), content.to_string()).await {
+             if let Ok(processed) = preprocess_hashtags_internal(app_handle.clone(), pool.inner().clone(), content.to_string()).await {
                  *last_msg = serde_json::json!({
                      "role": "user",
                      "content": processed,
@@ -215,6 +217,7 @@ async fn chat_with_model(
     }
 
     let mut final_json_response = String::new();
+    let mut accumulated_thinking = String::new();
 
     let tools_json = if use_tools {
         match get_all_mcp_tools(pool.clone()).await {
@@ -279,13 +282,34 @@ async fn chat_with_model(
             (msg, c, None)
         };
 
+        if let Some(t) = &thinking {
+            if !accumulated_thinking.is_empty() {
+                accumulated_thinking.push_str("\n\n");
+            }
+            accumulated_thinking.push_str(t);
+        }
+
+        let mut current_res_json = res_json.clone();
+        if !accumulated_thinking.is_empty() {
+            if is_ollama {
+                current_res_json["message"]["thinking"] = serde_json::json!(accumulated_thinking);
+            } else {
+                // For OpenAI format, we might need a custom field or just append to content if needed,
+                // but let's keep it in a 'thinking' field for our frontend to find.
+                if let Some(msg) = current_res_json["choices"][0]["message"].as_object_mut() {
+                    msg.insert("thinking".to_string(), serde_json::json!(accumulated_thinking));
+                }
+            }
+        }
+
         let current_json_str = if is_ollama {
-            res_json.to_string()
+            current_res_json.to_string()
         } else {
             serde_json::json!({
                 "message": {
                     "role": "assistant",
                     "content": content,
+                    "thinking": accumulated_thinking
                 }
             }).to_string()
         };
@@ -306,6 +330,7 @@ async fn chat_with_model(
                     tool_args.clone()
                 };
 
+                let _ = app_handle.emit("tool-call", &tool_name);
                 let result = match call_mcp_tool(pool.clone(), tool_name.to_string(), args_val).await {
                     Ok(r) => {
                         if let Some(parts) = r.get("content").and_then(|c| c.as_array()) {
@@ -314,6 +339,9 @@ async fn chat_with_model(
                     },
                     Err(e) => format!("Error: {}", e),
                 };
+                let _ = app_handle.emit("tool-response", &tool_name);
+
+                let _ = app_handle.emit("tool-result", serde_json::json!({ "name": tool_name, "content": result.clone() }));
 
                 if is_ollama {
                     current_messages.push(serde_json::json!({ "role": "user", "content": format!("Tool response for '{}':\n{}", tool_name, result) }));
@@ -347,7 +375,7 @@ async fn get_chats(pool: tauri::State<'_, SqlitePool>) -> Result<Vec<Chat>, Stri
         let id: String = row.get("id");
         let title: String = row.get("title");
 
-        let msg_rows = sqlx::query("SELECT role, content, images, thinking FROM messages WHERE chat_id = ? ORDER BY seq ASC")
+        let msg_rows = sqlx::query("SELECT role, content, images, thinking, tool_name FROM messages WHERE chat_id = ? ORDER BY seq ASC")
             .bind(&id)
             .fetch_all(&*pool)
             .await
@@ -360,6 +388,7 @@ async fn get_chats(pool: tauri::State<'_, SqlitePool>) -> Result<Vec<Chat>, Stri
                 content: m.get("content"),
                 images: images_raw.and_then(|i| serde_json::from_str::<Vec<String>>(&i).ok()),
                 thinking: m.get("thinking"),
+                tool_name: m.get("tool_name"),
             }
         }).collect();
 
@@ -398,12 +427,13 @@ async fn append_message(
     seq: i64
 ) -> Result<(), String> {
     let images_json = msg.images.as_ref().and_then(|i| serde_json::to_string(i).ok());
-    sqlx::query("INSERT INTO messages (chat_id, role, content, images, thinking, seq) VALUES (?, ?, ?, ?, ?, ?)")
+    sqlx::query("INSERT INTO messages (chat_id, role, content, images, thinking, tool_name, seq) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .bind(chat_id)
         .bind(msg.role)
         .bind(msg.content)
         .bind(images_json)
         .bind(msg.thinking)
+        .bind(msg.tool_name)
         .bind(seq)
         .execute(&*pool)
         .await
@@ -588,9 +618,11 @@ async fn get_all_mcp_tools(pool: tauri::State<'_, SqlitePool>) -> Result<Vec<Mcp
     let mut all_tools = Vec::new();
 
     for server in servers {
+        println!("Listing tools for server: {}", server.name);
         match process_mcp_request(&server.command, &server.args, &server.env, "tools/list", serde_json::json!({})).await {
             Ok(result) => {
                 if let Some(tools) = result["tools"].as_array() {
+                    println!("Found {} tools for {}", tools.len(), server.name);
                     for t in tools {
                         all_tools.push(McpTool {
                             name: t["name"].as_str().unwrap_or_default().to_string(),
@@ -603,6 +635,7 @@ async fn get_all_mcp_tools(pool: tauri::State<'_, SqlitePool>) -> Result<Vec<Mcp
             Err(e) => println!("Error listing tools for {}: {}", server.name, e),
         }
     }
+    println!("Total tools found: {}", all_tools.len());
     Ok(all_tools)
 }
 
@@ -634,13 +667,15 @@ async fn call_mcp_tool(
 
 #[command]
 async fn preprocess_hashtags(
+    app_handle: tauri::AppHandle,
     pool: tauri::State<'_, SqlitePool>,
     text: String,
 ) -> Result<String, String> {
-    preprocess_hashtags_internal(pool.inner().clone(), text).await
+    preprocess_hashtags_internal(app_handle, pool.inner().clone(), text).await
 }
 
 async fn preprocess_hashtags_internal(
+    app_handle: tauri::AppHandle,
     pool: SqlitePool,
     text: String,
 ) -> Result<String, String> {
@@ -691,6 +726,10 @@ async fn preprocess_hashtags_internal(
                     tool_output.push_str("\n... (truncated for brevity)");
                 }
 
+                // Emit event so it shows as a separate message
+                let _ = app_handle.emit("tool-result", serde_json::json!({ "name": tag, "content": tool_output.clone() }));
+                
+                // Still augment for the model's context, but we might want to keep it hidden from user in future
                 augmented_text.push_str(&format!("\n\n--- Tool Output (#{}) ---\n{}", tag, tool_output));
             },
             Err(_) => {}
@@ -699,6 +738,7 @@ async fn preprocess_hashtags_internal(
 
     Ok(augmented_text)
 }
+
 
 async fn call_mcp_tool_internal(
     pool: SqlitePool,
@@ -1127,6 +1167,7 @@ pub fn run() {
                 
                 // Version 2 migration
                 let _ = sqlx::query("ALTER TABLE messages ADD COLUMN thinking TEXT;").execute(&pool).await;
+                let _ = sqlx::query("ALTER TABLE messages ADD COLUMN tool_name TEXT;").execute(&pool).await;
 
                 app_handle.manage(pool);
             });

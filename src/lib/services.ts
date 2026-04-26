@@ -1,5 +1,6 @@
 import { get } from 'svelte/store';
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import * as s from './stores';
 
@@ -238,7 +239,49 @@ export async function addKnowledgeFolder() {
 export async function refreshMcpServers() {
   const servers = await invoke<s.McpServerConfig[]>("list_mcp_servers");
   s.mcpServers.set(servers);
+  await refreshAvailableTools();
 }
+
+export async function refreshAvailableTools() {
+  try {
+    const tools = await invoke<s.McpTool[]>("get_all_mcp_tools");
+    s.availableTools.set(tools);
+  } catch (e) {
+    console.error("Failed to refresh tools:", e);
+    s.availableTools.set([]);
+  }
+}
+
+// ── Event Listeners ────────────────────────────────────────────────────────
+listen("tool-call", (event: any) => {
+  s.activeToolCall.set(event.payload);
+});
+
+listen("tool-response", () => {
+  s.activeToolCall.set(null);
+});
+
+listen("tool-result", async (event: any) => {
+  const { name, content } = event.payload;
+  const targetId = get(s.activeChatId);
+  if (!targetId) return;
+
+  const toolMsg: s.OllamaMessage = { 
+    role: "assistant", 
+    content, 
+    tool_name: name 
+  };
+
+  const chats = get(s.chats);
+  const chat = chats.find(c => c.id === targetId);
+  if (chat) {
+    const seq = chat.messages.length;
+    await invoke("append_message", { chatId: targetId, msg: toolMsg, seq });
+    s.chats.update(list => list.map(c => 
+      c.id === targetId ? { ...c, messages: [...c.messages, toolMsg] } : c
+    ));
+  }
+});
 
 export async function checkAllMcpServers() {
   const servers = get(s.mcpServers);
