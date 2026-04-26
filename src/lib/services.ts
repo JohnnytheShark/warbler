@@ -8,7 +8,7 @@ import * as s from './stores';
 export async function toBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload  = () => resolve((reader.result as string).split(",")[1]);
+    reader.onload = () => resolve((reader.result as string).split(",")[1]);
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
@@ -21,7 +21,7 @@ export async function fetchModels() {
     const parsed = JSON.parse(raw);
     const models = (parsed.models ?? []).map((m: { name: string }) => m.name);
     s.availableModels.set(models);
-    
+
     const currentModel = get(s.selectedModel);
     if (models.length > 0 && !models.includes(currentModel)) {
       await saveModelPref(models[0]);
@@ -131,7 +131,7 @@ export async function sendMessage() {
   const seq = chatSnapshot.messages.length;
   await invoke("append_message", { chatId: targetId, msg: userMsg, seq });
 
-  s.chats.update(list => list.map(c => 
+  s.chats.update(list => list.map(c =>
     c.id === targetId ? { ...c, title, messages: [...c.messages, userMsg] } : c
   ));
 
@@ -147,7 +147,7 @@ export async function sendMessage() {
         topK: 20
       });
       if (results.length > 0) {
-        groundingContext = "\n\nRelevant Context from your files:\n" + 
+        groundingContext = "\n\nRelevant Context from your files:\n" +
           results.map(r => `--- From ${r.file_path} ---\n${r.content}`).join("\n\n");
       }
     } catch (e) {
@@ -196,7 +196,7 @@ export async function sendMessage() {
     const nextSeq = get(s.chats).find(c => c.id === targetId)!.messages.length;
     await invoke("append_message", { chatId: targetId, msg: assistantMsg, seq: nextSeq });
 
-    s.chats.update(list => list.map(c => 
+    s.chats.update(list => list.map(c =>
       c.id === targetId ? { ...c, messages: [...c.messages, assistantMsg] } : c
     ));
   } catch (err) {
@@ -205,7 +205,7 @@ export async function sendMessage() {
       const errMsg: s.OllamaMessage = { role: "assistant", content: `[Error: ${errStr}]` };
       const nextSeq = get(s.chats).find(c => c.id === targetId)!.messages.length;
       await invoke("append_message", { chatId: targetId, msg: errMsg, seq: nextSeq });
-      s.chats.update(list => list.map(c => 
+      s.chats.update(list => list.map(c =>
         c.id === targetId ? { ...c, messages: [...c.messages, errMsg] } : c
       ));
     }
@@ -266,10 +266,10 @@ listen("tool-result", async (event: any) => {
   const targetId = get(s.activeChatId);
   if (!targetId) return;
 
-  const toolMsg: s.OllamaMessage = { 
-    role: "assistant", 
-    content, 
-    tool_name: name 
+  const toolMsg: s.OllamaMessage = {
+    role: "assistant",
+    content,
+    tool_name: name
   };
 
   const chats = get(s.chats);
@@ -277,7 +277,7 @@ listen("tool-result", async (event: any) => {
   if (chat) {
     const seq = chat.messages.length;
     await invoke("append_message", { chatId: targetId, msg: toolMsg, seq });
-    s.chats.update(list => list.map(c => 
+    s.chats.update(list => list.map(c =>
       c.id === targetId ? { ...c, messages: [...c.messages, toolMsg] } : c
     ));
   }
@@ -298,7 +298,7 @@ export async function removeMcpServer(id: string) {
   await refreshMcpServers();
 }
 
-export async function addMcpServerConfig(name: string, command: string, args: string, env: {key: string, value: string}[]) {
+export async function addMcpServerConfig(name: string, command: string, args: string, env: { key: string, value: string }[]) {
   const config: s.McpServerConfig = {
     id: crypto.randomUUID(),
     name,
@@ -315,4 +315,43 @@ export async function addMcpServerConfig(name: string, command: string, args: st
 export async function saveMcpMaxLength(limit: number) {
   s.mcpMaxLength.set(limit);
   await invoke("set_config", { key: "mcp_max_length", value: limit.toString() });
+}
+
+// ── App Init ───────────────────────────────────────────────────────────────
+async function loadConfig() {
+  try {
+    const provider = await invoke<string>("get_config", { key: "ai_provider" });
+    const baseUrl = await invoke<string>("get_config", { key: "ai_base_url" });
+    const model = await invoke<string>("get_config", { key: "chat_model" });
+    const embedModel = await invoke<string>("get_config", { key: "embedding_model" });
+    const maxLen = await invoke<string>("get_config", { key: "mcp_max_length" });
+
+    if (provider) s.aiProvider.set(provider);
+    if (baseUrl) s.aiBaseUrl.set(baseUrl);
+    if (model) s.selectedModel.set(model);
+    if (embedModel) s.selectedEmbeddingModel.set(embedModel);
+    if (maxLen) s.mcpMaxLength.set(parseInt(maxLen));
+  } catch (e) {
+    console.error("Failed to load config:", e);
+  }
+}
+
+export async function initApp() {
+  await loadConfig();
+
+  for (let i = 0; i < 5; i++) {
+    await fetchModels();
+    if (get(s.ollamaConnected)) break;
+    await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+  }
+
+  await refreshMcpServers();
+  await checkAllMcpServers();
+  await refreshGroundingFolders();
+  await checkEmbeddingRequirement();
+
+  setInterval(async () => {
+    await fetchModels();
+    await checkAllMcpServers();
+  }, 30_000);
 }
