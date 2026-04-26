@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { mcpServers, mcpStatus } from "../../lib/stores";
-  import { removeMcpServer } from "../../lib/services";
+  import { mcpServers, mcpStatus, mcpMaxLength } from "../../lib/stores";
+  import { removeMcpServer, saveMcpMaxLength } from "../../lib/services";
   import { createEventDispatcher } from "svelte";
 
   const dispatch = createEventDispatcher();
@@ -27,6 +27,16 @@
     {#if $mcpServers.length === 0}
         <p class="kb-hint">No tools added.</p>
     {/if}
+  </div>
+
+  <div class="mcp-config-row">
+    <div class="config-label-row">
+      <span>Truncation Limit</span>
+      <span class="value-badge">{$mcpMaxLength} chars</span>
+    </div>
+    <input type="range" min="100" max="100000" step="100" 
+           bind:value={$mcpMaxLength} 
+           on:change={(e) => saveMcpMaxLength(parseInt(e.currentTarget.value))} />
   </div>
 </div>
 
@@ -59,4 +69,16 @@
   .status-indicator-mini.connected { background: #00ff7f; box-shadow: 0 0 6px rgba(0, 255, 127, 0.4); }
   .status-indicator-mini.error { background: #ff4747; box-shadow: 0 0 6px rgba(255, 71, 71, 0.4); }
   .status-indicator-mini.checking { background: #ffaa00; box-shadow: 0 0 6px rgba(255, 170, 0, 0.4); }
+
+  .mcp-config-row { margin-top: 16px; padding-top: 16px; border-top: 1px solid #1a1a1a; display: flex; flex-direction: column; gap: 8px; }
+  .config-label-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.7rem; color: #555; font-weight: 600; text-transform: uppercase; }
+  .value-badge { background: #222; color: #aaa; padding: 2px 6px; border-radius: 4px; font-family: monospace; text-transform: none; }
+
+  input[type="range"] {
+    -webkit-appearance: none; width: 100%; height: 4px; background: #222; border-radius: 2px; outline: none; margin: 8px 0;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 12px; height: 12px; background: #555; border-radius: 50%; cursor: pointer; transition: background 0.2s;
+  }
+  input[type="range"]::-webkit-slider-thumb:hover { background: #888; }
 </style>

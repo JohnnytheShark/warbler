@@ -36,6 +36,9 @@
       const savedBaseUrl = await invoke<string | null>("get_config", { key: "ai_base_url" }).catch(() => null);
       if (savedBaseUrl) s.aiBaseUrl.set(savedBaseUrl);
 
+      const savedMcpLimit = await invoke<string | null>("get_config", { key: "mcp_max_length" }).catch(() => null);
+      if (savedMcpLimit) s.mcpMaxLength.set(parseInt(savedMcpLimit));
+
       const chats = await invoke<s.Chat[]>("get_chats").catch(() => []);
       s.chats.set(chats);
       if (chats.length > 0) s.activeChatId.set(chats[0].id);

@@ -200,6 +200,20 @@ async fn chat_with_model(
     };
 
     let mut current_messages = messages.clone();
+    
+    // ── Pre-process Hashtags ──
+    if let Some(last_msg) = current_messages.iter_mut().rev().find(|m| m["role"] == "user") {
+        if let Some(content) = last_msg["content"].as_str() {
+             if let Ok(processed) = preprocess_hashtags_internal(pool.clone(), content.to_string()).await {
+                 *last_msg = serde_json::json!({
+                     "role": "user",
+                     "content": processed,
+                     "images": last_msg.get("images")
+                 });
+             }
+        }
+    }
+
     let mut final_json_response = String::new();
 
     let tools_json = if use_tools {
@@ -619,6 +633,114 @@ async fn call_mcp_tool(
 }
 
 #[command]
+async fn preprocess_hashtags(
+    pool: tauri::State<'_, SqlitePool>,
+    text: String,
+) -> Result<String, String> {
+    preprocess_hashtags_internal(pool.inner().clone(), text).await
+}
+
+async fn preprocess_hashtags_internal(
+    pool: SqlitePool,
+    text: String,
+) -> Result<String, String> {
+    let mut augmented_text = text.clone();
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let mut hashtags = Vec::new();
+    
+    for word in words {
+        if word.starts_with('#') && word.len() > 1 {
+            let tag = word[1..].trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
+            if !tag.is_empty() {
+                hashtags.push(tag.to_string());
+            }
+        }
+    }
+    
+    hashtags.sort();
+    hashtags.dedup();
+
+    for tag in hashtags {
+        if text.contains(&format!("--- Tool Output (#{}) ---", tag)) {
+            continue;
+        }
+
+        match call_mcp_tool_internal(pool.clone(), tag.clone(), serde_json::json!({})).await {
+            Ok(result) => {
+                let mut tool_output = if let Some(content) = result.get("content").and_then(|c| c.as_array()) {
+                    content.iter()
+                        .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                } else if result.is_string() {
+                    result.as_str().unwrap_or_default().to_string()
+                } else {
+                    serde_json::to_string_pretty(&result).unwrap_or_default()
+                };
+
+                let max_len = sqlx::query("SELECT value FROM settings WHERE key = 'mcp_max_length'")
+                    .fetch_optional(&pool)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|r| r.get::<String, _>("value").parse::<usize>().ok())
+                    .unwrap_or(2500);
+
+                if tool_output.len() > max_len {
+                    tool_output.truncate(max_len);
+                    tool_output.push_str("\n... (truncated for brevity)");
+                }
+
+                augmented_text.push_str(&format!("\n\n--- Tool Output (#{}) ---\n{}", tag, tool_output));
+            },
+            Err(_) => {}
+        }
+    }
+
+    Ok(augmented_text)
+}
+
+async fn call_mcp_tool_internal(
+    pool: SqlitePool,
+    name: String,
+    arguments: serde_json::Value
+) -> Result<serde_json::Value, String> {
+    let rows = sqlx::query("SELECT id, name, command, args, env FROM mcp_servers")
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut servers = Vec::new();
+    for r in rows {
+        let args_json: String = r.get("args");
+        let env_json: String = r.get("env");
+        servers.push(McpServerConfig {
+            id: r.get("id"),
+            name: r.get("name"),
+            command: r.get("command"),
+            args: serde_json::from_str(&args_json).unwrap_or_default(),
+            env: serde_json::from_str(&env_json).unwrap_or_default(),
+        });
+    }
+    
+    for server in servers {
+        let tools_res = process_mcp_request(&server.command, &server.args, &server.env, "tools/list", serde_json::json!({})).await;
+        if let Ok(res) = tools_res {
+             if res["tools"].as_array().map_or(false, |ts| ts.iter().any(|t| t["name"] == name)) {
+                return process_mcp_request(
+                    &server.command, 
+                    &server.args, 
+                    &server.env,
+                    "tools/call", 
+                    serde_json::json!({ "name": name, "arguments": arguments })
+                ).await;
+             }
+        }
+    }
+    Err(format!("Tool {} not found in any server", name))
+}
+
+#[command]
 async fn check_mcp_server(
     pool: tauri::State<'_, SqlitePool>,
     id: String
@@ -960,6 +1082,9 @@ pub fn run() {
 
                  sqlx::query("INSERT OR IGNORE INTO settings (key, value) VALUES ('ai_base_url', 'http://localhost:11434');")
                     .execute(&pool).await.unwrap();
+
+                 sqlx::query("INSERT OR IGNORE INTO settings (key, value) VALUES ('mcp_max_length', '2500');")
+                    .execute(&pool).await.unwrap();
                 
                 sqlx::query("CREATE TABLE IF NOT EXISTS messages (
                     id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1031,6 +1156,7 @@ pub fn run() {
             delete_mcp_server,
             get_all_mcp_tools,
             call_mcp_tool,
+            preprocess_hashtags,
             check_mcp_server,
             get_prompts,
             add_prompt,

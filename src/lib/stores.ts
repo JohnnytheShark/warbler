@@ -76,6 +76,7 @@ export const mcpServers = writable<McpServerConfig[]>([]);
 export const mcpStatus = writable<Record<string, 'connected' | 'error' | 'checking'>>({});
 export const useGrounding = writable(false);
 export const useTools = writable(false);
+export const mcpMaxLength = writable(2500);
 
 // ── Input Store ────────────────────────────────────────────────────────────
 export const input = writable("");

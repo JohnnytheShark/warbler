@@ -111,6 +111,14 @@ export async function sendMessage() {
   const userMsg: s.OllamaMessage = { role: "user", content: currentInput };
   if (images.length > 0) userMsg.images = images;
 
+  // ── Hashtag Tool Preprocessing ──
+  try {
+    const processedText = await invoke<string>("preprocess_hashtags", { text: currentInput });
+    userMsg.content = processedText;
+  } catch (e) {
+    console.warn("Hashtag preprocessing failed:", e);
+  }
+
   const chatSnapshot = get(s.chats).find(c => c.id === targetId)!;
   const isFirst = chatSnapshot.messages.length === 0;
   const title = isFirst ? (currentInput.slice(0, 40) || "New Chat") : chatSnapshot.title;
@@ -259,4 +267,9 @@ export async function addMcpServerConfig(name: string, command: string, args: st
   await invoke("add_mcp_server", { config });
   await refreshMcpServers();
   await checkAllMcpServers();
+}
+
+export async function saveMcpMaxLength(limit: number) {
+  s.mcpMaxLength.set(limit);
+  await invoke("set_config", { key: "mcp_max_length", value: limit.toString() });
 }
