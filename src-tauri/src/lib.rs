@@ -2,6 +2,7 @@ use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::Notify;
 use sqlx::sqlite::SqlitePool;
+use tracing_subscriber::EnvFilter;
 
 pub mod models;
 pub mod db;
@@ -15,6 +16,9 @@ use ai::CancelSignal;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Initialize tracing logger
+    init_logger();
+    
     let cancel_signal: CancelSignal = Arc::new(Notify::new());
 
     tauri::Builder::default()
@@ -144,4 +148,40 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn init_logger() {
+    use tracing_subscriber::fmt;
+    
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+    
+    // Try to create logs directory in a standard location
+    let logs_dir = if let Ok(app_data) = std::env::var("APPDATA") {
+        let dir = std::path::PathBuf::from(&app_data)
+            .join("Warbler")
+            .join("logs");
+        let _ = std::fs::create_dir_all(&dir);
+        Some(dir)
+    } else {
+        None
+    };
+    
+    let builder = fmt()
+        .with_env_filter(env_filter)
+        .with_thread_ids(true)
+        .with_target(true)
+        .with_level(true);
+    
+    if let Some(logs_dir) = logs_dir {
+        let file_appender = tracing_appender::rolling::daily(&logs_dir, "warbler.log");
+        let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+        
+        let _ = builder
+            .with_writer(non_blocking)
+            .with_ansi(false)
+            .try_init();
+    } else {
+        let _ = builder.try_init();
+    }
 }

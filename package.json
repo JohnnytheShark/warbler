@@ -1,6 +1,6 @@
 {
   "name": "warbler",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A universal local AI client built with Tauri and Svelte.",
   "type": "module",
   "scripts": {

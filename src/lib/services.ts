@@ -239,7 +239,6 @@ export async function addKnowledgeFolder() {
 export async function refreshMcpServers() {
   const servers = await invoke<s.McpServerConfig[]>("list_mcp_servers");
   s.mcpServers.set(servers);
-  await refreshAvailableTools();
 }
 
 export async function refreshAvailableTools() {
@@ -309,7 +308,11 @@ export async function addMcpServerConfig(name: string, command: string, args: st
 
   await invoke("add_mcp_server", { config });
   await refreshMcpServers();
-  await checkAllMcpServers();
+  // Refresh tools and check servers in parallel instead of sequentially
+  await Promise.all([
+    refreshAvailableTools(),
+    checkAllMcpServers()
+  ]);
 }
 
 export async function saveMcpMaxLength(limit: number) {
@@ -346,7 +349,11 @@ export async function initApp() {
   }
 
   await refreshMcpServers();
-  await checkAllMcpServers();
+  // Load tools and check server status in parallel
+  await Promise.all([
+    refreshAvailableTools(),
+    checkAllMcpServers()
+  ]);
   await refreshGroundingFolders();
   await checkEmbeddingRequirement();
 
