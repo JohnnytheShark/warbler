@@ -7,6 +7,7 @@ export interface OllamaMessage {
   content: string;
   images?: string[];
   thinking?: string;
+  tool_name?: string;
 }
 
 export interface Chat {
@@ -32,6 +33,12 @@ export interface McpServerConfig {
   command: string;
   args: string[];
   env: [string, string][];
+}
+
+export interface McpTool {
+  name: string;
+  description?: string;
+  input_schema: any;
 }
 
 // ── Chat Store ─────────────────────────────────────────────────────────────
@@ -76,6 +83,9 @@ export const mcpServers = writable<McpServerConfig[]>([]);
 export const mcpStatus = writable<Record<string, 'connected' | 'error' | 'checking'>>({});
 export const useGrounding = writable(false);
 export const useTools = writable(false);
+export const mcpMaxLength = writable(2500);
+export const availableTools = writable<McpTool[]>([]);
+export const activeToolCall = writable<string | null>(null);
 
 // ── Input Store ────────────────────────────────────────────────────────────
 export const input = writable("");

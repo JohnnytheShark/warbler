@@ -1,6 +1,7 @@
 <script lang="ts">
   import { activeChat } from "../../lib/stores";
   import ChatHeader from "./ChatHeader.svelte";
+  import ToolsPanel from "./ToolsPanel.svelte";
   import MessageList from "./MessageList.svelte";
   import ChatInput from "./ChatInput.svelte";
   import icon from "../../assets/icon.png";
@@ -18,6 +19,7 @@
   {:else}
     <div class="chat-container">
       <ChatHeader />
+      <ToolsPanel />
       <MessageList />
       <ChatInput />
     </div>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { messages, isSending } from "../../lib/stores";
+  import { messages, isSending, activeToolCall } from "../../lib/stores";
   import MessageItem from "./MessageItem.svelte";
   import { onMount, afterUpdate } from "svelte";
 
@@ -23,7 +23,16 @@
   {#each $messages as msg}
     <MessageItem {msg} />
   {/each}
-  {#if $isSending}
+  {#if $activeToolCall}
+    <div class="bubble-row assistant">
+      <div class="avatar">🔌</div>
+      <div class="bubble tool-calling">
+        <span class="pulse"></span>
+        Calling tool: <strong>#{$activeToolCall}</strong>...
+      </div>
+    </div>
+  {/if}
+  {#if $isSending && !$activeToolCall}
     <div class="bubble-row assistant">
       <div class="avatar">🦙</div>
       <div class="bubble typing"><span></span><span></span><span></span></div>
@@ -55,6 +64,31 @@
   .bubble.typing span { width: 6px; height: 6px; background: #555; border-radius: 50%; animation: typing 1.4s infinite; }
   .bubble.typing span:nth-child(2) { animation-delay: 0.2s; }
   .bubble.typing span:nth-child(3) { animation-delay: 0.4s; }
+
+  .bubble.tool-calling {
+    background: rgba(0, 191, 255, 0.05);
+    border: 1px solid rgba(0, 191, 255, 0.2);
+    color: #00bfff;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.85rem;
+  }
+
+  .pulse {
+    width: 8px;
+    height: 8px;
+    background: #00bfff;
+    border-radius: 50%;
+    box-shadow: 0 0 0 0 rgba(0, 191, 255, 0.7);
+    animation: pulse 1.5s infinite;
+  }
+
+  @keyframes pulse {
+    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 191, 255, 0.7); }
+    70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(0, 191, 255, 0); }
+    100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 191, 255, 0); }
+  }
 
   @keyframes typing {
     0%, 100% { transform: translateY(0); opacity: 0.4; }
