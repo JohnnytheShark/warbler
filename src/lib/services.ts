@@ -172,11 +172,22 @@ export async function sendMessage() {
       useTools: get(s.useTools)
     });
 
+    if (!response) {
+      throw new Error("Received empty response from the model.");
+    }
+
     let text = "";
     let thinking: string | undefined;
     try {
       const parsed = typeof response === "string" ? JSON.parse(response) : response;
-      let raw: string = parsed?.message?.content ?? JSON.stringify(parsed, null, 2);
+      let raw: string = parsed?.message?.content ?? "";
+
+      if (!raw && !parsed?.message?.thinking) {
+        // If content is empty but it's a valid JSON, check if it's just a raw dump
+        if (Object.keys(parsed).length > 0 && !parsed.message) {
+           raw = JSON.stringify(parsed, null, 2);
+        }
+      }
 
       if (parsed?.message?.thinking) {
         thinking = parsed.message.thinking;
@@ -190,7 +201,14 @@ export async function sendMessage() {
         }
       }
       text = raw;
-    } catch { text = String(response); }
+    } catch (e) { 
+      console.warn("Failed to parse LLM response as JSON, using raw text.", e);
+      text = String(response); 
+    }
+
+    if (!text && !thinking) {
+      text = "[Empty response from model]";
+    }
 
     const assistantMsg: s.OllamaMessage = { role: "assistant", content: text, ...(thinking ? { thinking } : {}) };
     const nextSeq = get(s.chats).find(c => c.id === targetId)!.messages.length;
@@ -202,6 +220,7 @@ export async function sendMessage() {
   } catch (err) {
     const errStr = String(err);
     if (!errStr.includes("__cancelled__")) {
+      console.error("Chat error:", err);
       const errMsg: s.OllamaMessage = { role: "assistant", content: `[Error: ${errStr}]` };
       const nextSeq = get(s.chats).find(c => c.id === targetId)!.messages.length;
       await invoke("append_message", { chatId: targetId, msg: errMsg, seq: nextSeq });
