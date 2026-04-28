@@ -109,7 +109,7 @@ pub async fn process_mcp_request(
             error!("Failed to open stdout for MCP process");
             "Failed to open stdout"
         })?;
-        let mut stderr = child.stderr.take().map(BufReader::new);
+        let _stderr = child.stderr.take().map(BufReader::new);
         let mut reader = BufReader::new(stdout).lines();
 
         let init_req = serde_json::json!({

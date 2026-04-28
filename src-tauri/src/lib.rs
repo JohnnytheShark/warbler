@@ -12,14 +12,18 @@ pub mod grounding;
 pub mod prompts;
 pub mod utils;
 
-use ai::CancelSignal;
+pub struct CancelSignal(pub Arc<tokio::sync::RwLock<Arc<Notify>>>);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize tracing logger
     init_logger();
     
-    let cancel_signal: CancelSignal = Arc::new(Notify::new());
+    let cancel_signal = CancelSignal(Arc::new(tokio::sync::RwLock::new(Arc::new(Notify::new()))));
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(1200))
+        .build()
+        .unwrap();
 
     tauri::Builder::default()
         .setup(|app| {
@@ -110,6 +114,7 @@ pub fn run() {
             });
             Ok(())
         })
+        .manage(client)
         .manage(cancel_signal)
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
